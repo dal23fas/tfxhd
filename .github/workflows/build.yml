@@ -2,7 +2,10 @@
 # Run manually: Actions -> build -> Run workflow. No game data is needed or included.
 # NOTE: written without being able to run it; if a step fails, read its log (versions/URLs are the likely cause).
 name: build
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
 jobs:
   web:
     runs-on: ubuntu-latest
