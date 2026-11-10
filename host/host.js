@@ -201,7 +201,7 @@ const TFXHost = (() => {
 float h21(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
 float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),f.x),f.y);}
 float fbm(vec2 p){float a=0.5,s=0.0;for(int i=0;i<5;i++){s+=a*vn(p);p=p*2.03+17.1;a*=0.5;}return s;}`;
-  const gpu_dbg = {done: 0};
+  const gpu_dbg = {done: 0}; let state_tess = true;
   function makeGpu() {
     const cv = document.createElement('canvas');
     const gl = cv.getContext('webgl2', {antialias: true, alpha: false});
@@ -252,18 +252,19 @@ void main(){
   o=vec4(grade(col),1.0);
 }`);
     const poly = mk(`#version 300 es
-in vec2 p;in vec3 cp;in vec4 colm;out vec3 vP;out vec4 vC;
-void main(){gl_Position=vec4(p.x/160.0-1.0,1.0-p.y/100.0,0.0,1.0);vP=cp;vC=colm;}`,
+in vec2 p;in vec3 cp;in vec4 colm;in vec3 nrm;out vec3 vP;out vec4 vC;out vec3 vN;
+void main(){gl_Position=vec4(p.x/160.0-1.0,1.0-p.y/100.0,0.0,1.0);vP=cp;vC=colm;vN=nrm;}`,
 `#version 300 es
-precision highp float;in vec3 vP;in vec4 vC;out vec4 o;`+COMMON+GLSL_NOISE+`
+precision highp float;in vec3 vP;in vec4 vC;in vec3 vN;out vec4 o;`+COMMON+GLSL_NOISE+`
 void main(){
   vec3 base=vC.rgb; float mat=vC.a; vec3 W=worldOf(vP);
   float d=length(vP);
   vec3 col=base; float alpha=1.0;
-  if(mat>=2.0){ float t=mat-2.0; col=base*mix(1.22,0.62,t)*(0.9+0.2*vn(W.xz*0.05)); }
+  if(mat>=3.5){ col=base*0.55; alpha=0.42; }                       // panel-gap line between differently coloured faces
+  else if(mat>=2.0){ float t=mat-2.0; col=base*mix(1.22,0.62,t)*(0.9+0.2*vn(W.xz*0.05)); }
   else if(mat<0.5){
-    vec3 N=normalize(cross(dFdx(vP),dFdy(vP))); if(dot(N,vP)>0.0)N=-N;
-    vec3 Nw=uRight*N.x+uDown*N.y+uFwd*N.z; float nu=-Nw.y;
+    vec3 N=normalize(vN); if(dot(N,vP)>0.0)N=-N;
+    vec3 Nw=normalize(uRight*N.x+uDown*N.y+uFwd*N.z); float nu=-Nw.y;
     vec3 S=normalize(uSun); float diff=max(dot(Nw,S),0.0);
     vec3 amb=mix(vec3(0.46,0.40,0.36),vec3(0.50,0.56,0.70),nu*0.5+0.5);
     vec3 lit=amb+vec3(1.0,0.86,0.68)*diff*0.65;
@@ -277,10 +278,21 @@ void main(){
     } else {
       vec3 V=normalize(-vP); vec3 Vw=uRight*V.x+uDown*V.y+uFwd*V.z;
       vec3 R=reflect(-Vw,Nw);
-      float fres=0.04+0.32*pow(1.0-max(dot(Nw,Vw),0.0),4.0);
-      float spec=pow(max(dot(reflect(-S,Nw),Vw),0.0),26.0);
+      float ndv=max(dot(Nw,Vw),0.0);
+      float fres=0.04+0.32*pow(1.0-ndv,4.0);
+      vec3 Hh=normalize(S+Vw);
+      float spec=pow(max(dot(Nw,Hh),0.0),48.0);
       float lum=dot(base,vec3(0.333));
-      col=base*lit*1.25+skyAt(R)*fres*(0.4+lum)+vec3(1.0,0.92,0.8)*spec*0.34*(0.3+lum*1.5);
+      float up=-Nw.y;
+      float sky=0.5+0.5*up;                                      // hemispheric occlusion: undersides darker
+      vec3 hemi=mix(vec3(0.36,0.30,0.26),vec3(0.62,0.68,0.82),sky);
+      vec3 lit2=hemi*0.95+vec3(1.0,0.86,0.68)*diff*0.72;
+      float rim=pow(1.0-ndv,3.0)*0.18;
+      bool glass=(lum<0.2)&&(base.b>base.r*1.05);               // dark bluish faces are canopies/windows
+      col=base*lit2*1.18+skyAt(R)*fres*(0.4+lum)+vec3(1.0,0.92,0.8)*spec*0.30*(0.3+lum*1.5)+skyAt(R)*rim;
+      if(glass){ float f2=0.18+0.62*pow(1.0-ndv,2.0); col=mix(col,skyAt(R)*1.05,f2)+vec3(1.0,0.95,0.85)*spec*0.9; }
+      // structures near the ground: contact shadow at the base and faint floor banding on tall walls
+      if(W.y>-60.0 && abs(up)<0.2){ float ao=smoothstep(0.0,14.0,-W.y); col*=0.78+0.22*ao; col*=0.97+0.03*sin(W.y*2.2); }
     }
   }
   float f=0.5*(1.0-exp(-pow(d/uFar,1.3)*3.0));
@@ -290,15 +302,31 @@ void main(){
     const tex = mk(`#version 300 es
 in vec2 p;out vec2 uv;void main(){uv=p*0.5+0.5;uv.y=1.0-uv.y;gl_Position=vec4(p,0.0,1.0);}`,
 `#version 300 es
-precision mediump float;in vec2 uv;uniform sampler2D t;out vec4 o;void main(){o=texture(t,uv);}`);
+precision highp float;in vec2 uv;uniform sampler2D t;uniform vec2 uRes;out vec4 o;
+vec4 tap(vec2 q){return texture(t,q);}
+void main(){
+  vec2 size=vec2(1280.0,800.0); vec2 px=uv*size; float sc=max(uRes.x/1280.0,1.0);
+  vec2 f=fract(px), s=floor(px);
+  vec2 k=clamp((f-0.5)*sc+0.5,0.0,1.0);                       // sharp bilinear: crisp texels, smooth edges
+  vec2 q=(s+k)/size;
+  vec4 c=tap(q);
+  // soft glow around bright instrument/HUD pixels
+  vec3 g=vec3(0.0); float w=0.0;
+  for(int i=0;i<12;i++){ float a=float(i)*0.5236; vec2 d=vec2(cos(a),sin(a));
+    for(int r=1;r<=2;r++){ vec2 qq=(px+d*float(r)*4.0)/size; vec4 tc=tap(qq); float b=max(max(tc.r,tc.g),tc.b)*tc.a; b=smoothstep(0.55,1.0,b); g+=tc.rgb*b; w+=1.0; } }
+  g/=w; float ga=clamp(dot(g,vec3(0.45))*1.4,0.0,0.55);
+  vec3 col=c.rgb+g*0.9*(1.0-c.a);
+  o=vec4(col,max(c.a,ga*(1.0-c.a)));
+  o.rgb*=mix(1.0,1.04,c.a);
+}`);
     const vbo = gl.createBuffer(), qb = gl.createBuffer(), t = gl.createTexture();
     gl.bindBuffer(gl.ARRAY_BUFFER, qb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,1,1,-1,-1,1,1,-1,1]), gl.STATIC_DRAW);
     gl.bindTexture(gl.TEXTURE_2D, t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1280, 800, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     let T = new Float32Array(1 << 17), n = 0;
-    const STRIDE = 9; // sx sy cx cy cz r g b mat
-    const vtx = (sx, sy, c, col, mat) => { if (n + STRIDE > T.length) { const g = new Float32Array(T.length * 2); g.set(T); T = g; }
-      T[n++] = sx; T[n++] = sy; T[n++] = c[0]; T[n++] = c[1]; T[n++] = c[2]; T[n++] = col[0]; T[n++] = col[1]; T[n++] = col[2]; T[n++] = mat; };
+    const STRIDE = 12; // sx sy cx cy cz r g b mat nx ny nz
+    const vtx = (sx, sy, c, col, mat, nn) => { if (n + STRIDE > T.length) { const g = new Float32Array(T.length * 2); g.set(T); T = g; }
+      T[n++] = sx; T[n++] = sy; T[n++] = c[0]; T[n++] = c[1]; T[n++] = c[2]; T[n++] = col[0]; T[n++] = col[1]; T[n++] = col[2]; T[n++] = mat; T[n++] = nn ? nn[0] : 0; T[n++] = nn ? nn[1] : 0; T[n++] = nn ? nn[2] : 0; };
     const setU = (prog, S, pal) => {
       const u = (nm, ...v) => { const l = gl.getUniformLocation(prog, nm); if (l) (v.length === 3 ? gl.uniform3f(l, ...v) : v.length === 2 ? gl.uniform2f(l, ...v) : v.length === 4 ? gl.uniform4f(l, ...v) : gl.uniform1f(l, v[0])); };
       const c = i => [pal[i*3]/255, pal[i*3+1]/255, pal[i*3+2]/255];
@@ -314,12 +342,73 @@ precision mediump float;in vec2 uv;uniform sampler2D t;out vec4 o;void main(){o=
       const F = S[0], ox = S[1], oy = S[2], near = S[3], far = S[4], nh = S[17], np = S[18]; let k = 19;
       if (!gpu_dbg.done) { gpu_dbg.done = 1; console.log('cam', Array.from(S.slice(0, 19)).map(v => +v.toFixed(3)).join(' ')); }
       for (let h = 0; h < nh; h++) { k++; const m = S[k++]; k += 2 * m; } // the banded horizon is replaced by the per-pixel sky/ground pass
-      for (let q = 0; q < np; q++) { const kind = S[k], c = col(S[k+1]), ps = S[k+2], rad = S[k+3], m = S[k+4]; k += 5; const V = [], P = [];
+      const prims = [];
+      for (let q = 0; q < np; q++) { const kind = S[k], ci = S[k+1], ps = S[k+2], rad = S[k+3], m = S[k+4]; k += 5; const V = [], P = [];
         for (let i = 0; i < m; i++) { V.push([S[k], S[k+1], S[k+2]]); P.push([S[k+3], S[k+4]]); k += 5; }
-        if (kind === 0 && m >= 3) { for (let i = 1; i + 1 < m; i++) for (const j of [0, i, i + 1]) vtx(P[j][0], P[j][1], V[j], c, 0); }
+        prims.push({kind, ci, c: col(ci), ps, rad, m, V, P}); }
+      // Smooth vertex normals: weld shared vertices, average face normals across gentle creases only.
+      const Q = 24, key = v => Math.round(v[0] * Q) + ',' + Math.round(v[1] * Q) + ',' + Math.round(v[2] * Q);
+      const vmap = new Map(), emap = new Map();
+      for (const pr of prims) { if (pr.kind !== 0 || pr.m < 3) continue;
+        let nx = 0, ny = 0, nz = 0; const V = pr.V;
+        for (let i = 0; i < pr.m; i++) { const a = V[i], b = V[(i + 1) % pr.m]; nx += (a[1] - b[1]) * (a[2] + b[2]); ny += (a[2] - b[2]) * (a[0] + b[0]); nz += (a[0] - b[0]) * (a[1] + b[1]); }
+        const L = Math.hypot(nx, ny, nz); if (L < 1e-9) { pr.bad = true; continue; }
+        let cx = 0, cy = 0, cz = 0; for (const v of V) { cx += v[0]; cy += v[1]; cz += v[2]; } cx /= pr.m; cy /= pr.m; cz /= pr.m;
+        let n3 = [nx / L, ny / L, nz / L]; if (n3[0] * cx + n3[1] * cy + n3[2] * cz > 0) n3 = [-n3[0], -n3[1], -n3[2]];
+        pr.n = n3; pr.area = L; pr.keys = V.map(key);
+        for (const kk of pr.keys) { let l = vmap.get(kk); if (!l) vmap.set(kk, l = []); l.push(pr); }
+        for (let i = 0; i < pr.m; i++) { const k1 = pr.keys[i], k2 = pr.keys[(i + 1) % pr.m]; const ek = k1 < k2 ? k1 + '|' + k2 : k2 + '|' + k1; let l = emap.get(ek); if (!l) emap.set(ek, l = []); l.push(pr); } }
+      const TESS = state_tess;
+      const CREASE = 0.62; // cos of about 52 degrees
+      const vnorm = (pr, i) => { const l = vmap.get(pr.keys[i]); let x = 0, y = 0, z = 0;
+        for (const o of l) { const d = o.n[0] * pr.n[0] + o.n[1] * pr.n[1] + o.n[2] * pr.n[2]; if (d > CREASE) { x += o.n[0] * o.area; y += o.n[1] * o.area; z += o.n[2] * o.area; } }
+        const L = Math.hypot(x, y, z) || 1; return [x / L, y / L, z / L]; };
+      for (const pr of prims) { const {kind, c, ps, rad, m, V, P} = pr;
+        if (kind === 0 && m >= 3) {
+          const nn = pr.bad ? null : V.map((_, i) => vnorm(pr, i));
+          let tess = false;
+          if (!pr.bad && m <= 4 && TESS) { // curved surfaces: one level of PN-triangle style subdivision, flat/ground faces untouched
+            let cx = 0, cy = 0, cz = 0; for (const v of V) { cx += v[0]; cy += v[1]; cz += v[2]; } cx /= m; cy /= m; cz /= m;
+            const Wy = S[6] + S[9] * cx + S[12] * cy + S[15] * cz, nu = -(S[9] * pr.n[0] + S[12] * pr.n[1] + S[15] * pr.n[2]);
+            let curved = 0; for (let i = 0; i < m; i++) curved = Math.max(curved, 1 - (nn[i][0] * nn[(i + 1) % m][0] + nn[i][1] * nn[(i + 1) % m][1] + nn[i][2] * nn[(i + 1) % m][2]));
+            tess = !(nu > 0.85 && Wy > -30) && curved > 0.004 && cz > 0;
+          }
+          if (tess) {
+            const proj = v => [ox + F * v[0] / v[2], oy + F * v[1] / v[2]];
+            const res = V.map((v, i) => { const q = proj(v); return [P[i][0] - q[0], P[i][1] - q[1]]; });
+            const mids = new Map();
+            const mid = (i, j) => { const kk = i < j ? i + ',' + j : j + ',' + i; let r = mids.get(kk); if (r) return r;
+              const a = V[i], b = V[j]; let na = nn[i], nb = nn[j], smooth = true;
+              if ((j - i + m) % m === 1 || (i - j + m) % m === 1) { // a real polygon edge: use the neighbour to keep the shared edge crack-free
+                const k1 = pr.keys[i], k2 = pr.keys[j], ek = k1 < k2 ? k1 + '|' + k2 : k2 + '|' + k1, l = emap.get(ek);
+                if (!l || l.length !== 2) smooth = false; else { const o = l[0] === pr ? l[1] : l[0];
+                  if (o.n[0] * pr.n[0] + o.n[1] * pr.n[1] + o.n[2] * pr.n[2] <= CREASE || o.bad) smooth = false;
+                  else { const ia = o.keys.indexOf(k1), ib = o.keys.indexOf(k2); if (ia < 0 || ib < 0) smooth = false; else { const oa = vnorm(o, ia), ob = vnorm(o, ib);
+                    na = [na[0] + oa[0], na[1] + oa[1], na[2] + oa[2]]; nb = [nb[0] + ob[0], nb[1] + ob[1], nb[2] + ob[2]];
+                    const La = Math.hypot(...na) || 1, Lb = Math.hypot(...nb) || 1; na = na.map(x => x / La); nb = nb.map(x => x / Lb); } } } }
+              const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+              const wab = d[0] * na[0] + d[1] * na[1] + d[2] * na[2], wba = -(d[0] * nb[0] + d[1] * nb[1] + d[2] * nb[2]);
+              const pos = [0, 1, 2].map(x => (a[x] + b[x]) / 2 - (smooth ? (wab * na[x] + wba * nb[x]) / 8 : 0));
+              let nm = [na[0] + nb[0], na[1] + nb[1], na[2] + nb[2]]; const Ln = Math.hypot(...nm) || 1; nm = nm.map(x => x / Ln);
+              const q = proj(pos); const scr = pos[2] > 0.01 ? [q[0] + (res[i][0] + res[j][0]) / 2, q[1] + (res[i][1] + res[j][1]) / 2] : [(P[i][0] + P[j][0]) / 2, (P[i][1] + P[j][1]) / 2];
+              r = {pos, nrm: nm, scr}; mids.set(kk, r); return r; };
+            const corner = i => ({pos: V[i], nrm: nn[i], scr: P[i]});
+            const tri = (A, B, C) => { for (const v of [A, B, C]) vtx(v.scr[0], v.scr[1], v.pos, c, 0, v.nrm); };
+            const split = (i, j, k) => { const A = corner(i), B = corner(j), C = corner(k), ab = mid(i, j), bc = mid(j, k), ca = mid(k, i);
+              tri(A, ab, ca); tri(ab, B, bc); tri(ca, bc, C); tri(ab, bc, ca); };
+            for (let i = 1; i + 1 < m; i++) split(0, i, i + 1);
+          } else
+          for (let i = 1; i + 1 < m; i++) for (const j of [0, i, i + 1]) vtx(P[j][0], P[j][1], V[j], c, 0, nn ? nn[j] : null);
+          // thin dark seam where this face meets a differently coloured neighbour (panel lines, trim)
+          if (!pr.bad) for (let i = 0; i < m; i++) { const k1 = pr.keys[i], k2 = pr.keys[(i + 1) % m]; const ek = k1 < k2 ? k1 + '|' + k2 : k2 + '|' + k1; const l = emap.get(ek);
+            if (!l || l.length !== 2) continue; const o = l[0] === pr ? l[1] : l[0]; if (o.ci === pr.ci || pr.ci > o.ci) continue;
+            const a = P[i], b = P[(i + 1) % m], dx = b[0] - a[0], dy = b[1] - a[1], Ln = Math.hypot(dx, dy); if (Ln < 1.5) continue; const w = 0.22, nx = -dy / Ln * w, ny = dx / Ln * w;
+            const va = V[i], vb = V[(i + 1) % m];
+            for (const [Q2, Vv] of [[[a[0]+nx, a[1]+ny], va], [[a[0]-nx, a[1]-ny], va], [[b[0]+nx, b[1]+ny], vb], [[a[0]-nx, a[1]-ny], va], [[b[0]-nx, b[1]-ny], vb], [[b[0]+nx, b[1]+ny], vb]]) vtx(Q2[0], Q2[1], Vv, c, 4, null); }
+        }
         else if (kind === 1 && m === 2) { const a = P[0], b = P[1]; const dx = b[0]-a[0], dy = b[1]-a[1], L = Math.hypot(dx, dy) || 1, w = 0.5, nx = -dy/L*w, ny = dx/L*w;
           const A1 = [a[0]+nx, a[1]+ny], A2 = [a[0]-nx, a[1]-ny], B1 = [b[0]+nx, b[1]+ny], B2 = [b[0]-nx, b[1]-ny];
-          for (const [Q, Vv] of [[A1, V[0]], [A2, V[0]], [B1, V[1]], [A2, V[0]], [B2, V[1]], [B1, V[1]]]) vtx(Q[0], Q[1], Vv, c, 1);
+          for (const [Q2, Vv] of [[A1, V[0]], [A2, V[0]], [B1, V[1]], [A2, V[0]], [B2, V[1]], [B1, V[1]]]) vtx(Q2[0], Q2[1], Vv, c, 1);
         } else if (kind === 2 && m === 1) { const v = V[0]; const [x, y] = P[0];
           const r = ps ? ps / 2 : Math.max(0.5, rad * F / v[2]);
           for (const [dx, dy] of [[-1,-1],[1,-1],[1,1],[-1,-1],[1,1],[-1,1]]) vtx(x + dx * r, y + dy * r, v, c, ps ? 2 + (dy + 1) / 2 : 1); } }
@@ -329,11 +418,11 @@ precision mediump float;in vec2 uv;uniform sampler2D t;out vec4 o;void main(){o=
       // 2) lit scene geometry in the game's own back-to-front order
       gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.useProgram(poly); setU(poly, S, pal); gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.bufferData(gl.ARRAY_BUFFER, T.subarray(0, n), gl.DYNAMIC_DRAW);
       const bind = (nm, size, off) => { const l = gl.getAttribLocation(poly, nm); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, size, gl.FLOAT, false, STRIDE * 4, off * 4); };
-      bind('p', 2, 0); bind('cp', 3, 2); bind('colm', 4, 5);
+      bind('p', 2, 0); bind('cp', 3, 2); bind('colm', 4, 5); bind('nrm', 3, 9);
       gl.drawArrays(gl.TRIANGLES, 0, n / STRIDE);
       // 3) cockpit / HUD layer (smoothed original)
       gl.bindTexture(gl.TEXTURE_2D, t); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1280, 800, gl.RGBA, gl.UNSIGNED_BYTE, smoothOverlay(overlay));
-      gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.useProgram(tex);
+      gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.useProgram(tex); gl.uniform2f(gl.getUniformLocation(tex, 'uRes'), dw, dh);
       gl.bindBuffer(gl.ARRAY_BUFFER, qb); const ql = gl.getAttribLocation(tex, 'p'); gl.enableVertexAttribArray(ql); gl.vertexAttribPointer(ql, 2, gl.FLOAT, false, 8, 0);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     }};
