@@ -48,7 +48,7 @@ jobs:
       - name: Package
         working-directory: electron
         run: |
-          npm install --no-save electron@latest @electron/packager
+          npm install --save-dev electron @electron/packager
           npx @electron/packager . TFX-HD --platform=win32 --arch=x64 --out=dist --overwrite
           Compress-Archive -Path dist/TFX-HD-win32-x64 -DestinationPath ../TFX-HD-windows.zip
         shell: pwsh
