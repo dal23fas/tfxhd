@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="el"><head><meta charset="utf-8"><title>TFX — HTML</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+html,body{margin:0;height:100%;background:#0b0e12;color:#cfd8e3;font:14px system-ui,sans-serif}
+#bar{display:flex;gap:8px;align-items:center;padding:6px 10px;background:#141a22;border-bottom:1px solid #26303c;flex-wrap:wrap}
+#bar b{color:#fff}button,label.btn{background:#233041;color:#e8eef5;border:1px solid #3a4a5e;border-radius:4px;padding:4px 10px;cursor:pointer;font:inherit}
+button:hover,label.btn:hover{background:#2f4157}button.on{background:#2b6cb0;border-color:#4a90d9}button:disabled{opacity:.4;cursor:default}
+#stage{position:absolute;top:38px;left:0;right:0;bottom:0}canvas{width:100%;height:100%;display:block;background:#000;outline:none}
+#setup{position:absolute;inset:38px 0 0 0;display:flex;align-items:center;justify-content:center;background:#0b0e12}
+#box{max-width:640px;padding:24px;border:1px solid #26303c;border-radius:8px;background:#10161d;line-height:1.5}
+#drop{border:2px dashed #3a4a5e;border-radius:8px;padding:22px;text-align:center;margin:14px 0}#drop.over{border-color:#4a90d9;background:#142235}
+#list{font-family:monospace;font-size:12px;min-height:18px;margin-top:6px}.ok{color:#6fcf97}.bad{color:#eb5757}small{color:#8a99ab}
+#msg{margin-top:10px;color:#f2c94c}
+</style></head><body>
+<div id="bar"><b>TFX</b><span id="hint"><small>Φόρτωσε τα δικά σου αρχεία παιχνιδιού για να ξεκινήσεις</small></span><span style="flex:1"></span>
+<button id="bClassic" class="on" disabled>Classic</button><button id="bRemaster" disabled>Remaster</button><button id="bHD" disabled>HD (GPU)</button>
+<button id="bMute" disabled>Ήχος: ON</button><button id="bMus" disabled title="Επόμενο κομμάτι (προαιρετικά mp3 που φορτώνεις εσύ)">♪ Μουσική: OFF</button><input id="vMus" type="range" min="0" max="100" value="60" style="width:70px" title="Ένταση μουσικής"><button id="bFull" disabled>Πλήρης οθόνη</button><button id="bShot" disabled>Στιγμιότυπο PNG</button></div>
+<div id="stage"><canvas id="cv" tabindex="0"></canvas></div>
+<div id="setup"><div id="box">
+<h2 style="margin-top:0">TFX: Tactical Fighter Experiment — έκδοση browser</h2>
+<div>Το παιχνίδι τρέχει ολόκληρο στον browser σου (C++ → WebAssembly). Τα δεδομένα του παιχνιδιού <b>δεν περιέχονται</b> εδώ και <b>δεν ανεβαίνουν πουθενά</b>: διαβάζονται τοπικά από τα αρχεία που θα διαλέξεις.</div>
+<div id="drop">Σύρε εδώ τα <b>TFX.DAT</b> και <b>DID.DAT</b> (έκδοση CD 2.05)<br><small>ή</small><br>
+<label class="btn">Επιλογή αρχείων<input id="pick" type="file" multiple hidden></label>
+<div id="list"></div></div>
+<button id="start" disabled>Έναρξη</button>
+<div id="msg"></div>
+<p><small>Χρειάζεται Chrome ή Edge 137+ (JSPI). Κλικ στον καμβά για να δώσεις εστίαση στο πληκτρολόγιο. Τα controls είναι τα αυθεντικά του παιχνιδιού. Ο ήχος δεν υποστηρίζεται ακόμη. Τα Classic/Remaster αλλάζουν μόνο την εμφάνιση, όχι την προσομοίωση.</small></p>
+</div></div>
+<script>/*HOST_JS*/</script>
+<script>
+const WASM_GZ_B64="/*WASM_B64*/";
+const $=id=>document.getElementById(id);
+const need=['tfx.dat','did.dat'];
+async function addPicked(fl){for(const f of fl){if(f.size>400e6)continue;if(/\.(mp3|ogg|wav|m4a)$/i.test(f.name)){TFXHost.music.add(f.name,f);continue;}TFXHost.addFile(f.name,new Uint8Array(await f.arrayBuffer()),true);}refresh();}
+function refresh(){const l=TFXHost.listFiles();$('list').innerHTML=l.map(([n,s])=>`<div>${n} <small>${(s/1048576).toFixed(2)} MB</small></div>`).join('')+TFXHost.music.list().map(n=>`<div>♪ ${n}</div>`).join('');
+ const ok=need.every(n=>TFXHost.hasFile(n));$('start').disabled=!ok;
+ $('msg').textContent=ok?'':(l.length?'Λείπει: '+need.filter(n=>!TFXHost.hasFile(n)).join(', ').toUpperCase():'');}
+$('pick').onchange=e=>addPicked(e.target.files);
+const drop=$('drop');['dragover','dragenter'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',e=>addPicked(e.dataTransfer.files));
+let game=null;
+let mode=0;function setMode(m){mode=m;game&&game.setMode(m);$('bClassic').classList.toggle('on',m===0);$('bRemaster').classList.toggle('on',m===1);$('bHD').classList.toggle('on',m===2);}
+$('bClassic').onclick=()=>{setMode(0);$('cv').focus()};$('bRemaster').onclick=()=>{setMode(1);$('cv').focus()};$('bHD').onclick=()=>{setMode(2);$('cv').focus()};
+$('bMus').onclick=()=>{const m=TFXHost.music;if(!m.tracks.length){$('hint').innerHTML='<small>Δεν έχεις φορτώσει mp3 (πρόσθεσέ τα στον επιλογέα αρχείων πριν την έναρξη)</small>';return;}
+ if(!m.on||m.idx<0){m.on=true;m.play(m.idx<0?0:m.idx)}else m.play(m.idx+1);$('bMus').textContent='♪ '+m.tracks[m.idx].name.replace(/\.[^.]+$/,'').slice(0,28);$('cv').focus()};
+$('vMus').oninput=e=>TFXHost.music.setVolume(e.target.value/100);
+let muted=false;$('bMute').onclick=()=>{muted=!muted;game&&game.setMute(muted);TFXHost.music.setOn(!muted&&TFXHost.music.idx>=0);$('bMute').textContent='Ήχος: '+(muted?'OFF':'ON');$('cv').focus()};
+$('bFull').onclick=()=>{$('stage').requestFullscreen?.();$('cv').focus()};
+$('bShot').onclick=()=>{$('cv').toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='tfx.png';a.click()})};
+async function gunzip(b64){const bin=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
+ const s=new Blob([bin]).stream().pipeThrough(new DecompressionStream('gzip'));return new Uint8Array(await new Response(s).arrayBuffer());}
+async function start(extraArgs){
+ if(!(WebAssembly.Suspending&&WebAssembly.promising)){$('msg').textContent='Ο browser δεν υποστηρίζει JSPI. Χρησιμοποίησε πρόσφατο Chrome ή Edge.';return;}
+ $('msg').textContent='Φόρτωση…';$('start').disabled=true;
+ const wasm=await gunzip(WASM_GZ_B64);
+ const restored=await TFXHost.restore();if(restored)console.log('restored saved files:',restored);
+ if(!TFXHost.hasFile('tfx.cfg'))TFXHost.addFile('TFX.CFG',new TextEncoder().encode('SOUNDFX=1\r\nMUSIC=3\r\nLANG=1\r\nCONTROL=0\r\nMODEL=3\r\nDETAIL=0\r\n'));
+ $('setup').style.display='none';
+ ['bClassic','bRemaster','bHD','bMute','bMus','bFull','bShot'].forEach(i=>$(i).disabled=false);
+ $('hint').innerHTML='<small>Κλικ στον καμβά για πληκτρολόγιο · Esc δύο φορές = εκτίναξη</small>';
+ if(TFXHost.music.tracks.length){TFXHost.music.play(0);$('bMus').textContent='♪ '+TFXHost.music.tracks[0].name.replace(/\.[^.]+$/,'').slice(0,28);}
+ game=await TFXHost.run({canvas:$('cv'),wasmBytes:wasm,args:['--data-dir','/',...(extraArgs||[])],mode:mode});
+ window.__game=game;$('cv').focus();
+ const code=await game.done;$('hint').innerHTML='<small>Το παιχνίδι τερμάτισε (κωδικός '+code+'). Ανανέωσε τη σελίδα.</small>';
+}
+$('start').onclick=()=>start();
+window.__tfxStart=start;window.__tfxHost=TFXHost;
+</script></body></html>
