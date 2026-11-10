@@ -1,0 +1,53 @@
+# Builds (1) tfx.html and (2) a Windows desktop app (Electron) from tfx-cpp 9459601 + patches/tfx-web-port.patch.
+# Run manually: Actions -> build -> Run workflow. No game data is needed or included.
+# NOTE: written without being able to run it; if a step fails, read its log (versions/URLs are the likely cause).
+name: build
+on: workflow_dispatch
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build cmake
+      - name: wasi-sdk 34
+        run: |
+          curl -fsSL -o sdk.tgz https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz
+          tar xzf sdk.tgz
+      - name: Upstream sources (pinned)
+        run: |
+          git clone https://github.com/Lost-Engines/tfx-cpp.git
+          git -C tfx-cpp checkout 9459601c5cdb5ab6135adf933da911146837f459
+          git -C tfx-cpp apply ../patches/tfx-web-port.patch
+          git clone https://github.com/Lost-Engines/qsound-cpp.git deps-qsound
+          git -C deps-qsound checkout 0e8bd213333af28a8b6eda9e8dafd30b5d09f577
+          git clone https://github.com/dosbox-staging/dosbox-staging.git deps-dosbox
+          git -C deps-dosbox checkout e164e788f9819d5ab898d705f863e2046baf8b03
+      - name: Build wasm
+        run: |
+          S=$PWD/wasi-sdk-34.0-x86_64-linux
+          cmake -S tfx-cpp/web -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=$S/share/cmake/wasi-sdk-p1.cmake -DWASI_SDK_PREFIX=$S \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE=-O2 -DQSOUND_ROOT=$PWD/deps-qsound -DDBOPL_SRC=$PWD/deps-dosbox
+          ninja -C build
+      - name: Assemble tfx.html
+        run: python3 host/build_html.py tfx.html build/tfx_web host/host.js host/template.html
+      - uses: actions/upload-artifact@v4
+        with: { name: tfx-html, path: tfx.html }
+  windows:
+    needs: web
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: tfx-html, path: electron }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Package
+        working-directory: electron
+        run: |
+          npm install --no-save electron@latest @electron/packager
+          npx @electron/packager . TFX-HD --platform=win32 --arch=x64 --out=dist --overwrite
+          Compress-Archive -Path dist/TFX-HD-win32-x64 -DestinationPath ../TFX-HD-windows.zip
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with: { name: tfx-hd-windows, path: TFX-HD-windows.zip }

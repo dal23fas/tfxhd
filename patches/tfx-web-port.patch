@@ -785,10 +785,10 @@ index 0000000..722973f
 +}
 diff --git a/web/CMakeLists.txt b/web/CMakeLists.txt
 new file mode 100644
-index 0000000..4b97544
+index 0000000..b2d1d56
 --- /dev/null
 +++ b/web/CMakeLists.txt
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,57 @@
 +cmake_minimum_required(VERSION 3.20)
 +project(tfx_web LANGUAGES C CXX)
 +set(CMAKE_CXX_STANDARD 26)
@@ -804,10 +804,15 @@ index 0000000..4b97544
 +  list(APPEND AUDIO_SRCS "${CMAKE_CURRENT_LIST_DIR}/../src/audio/${name}.cpp")
 +endforeach()
 +# QSound spatial model (compiled in, as in the native build)
-+set(QSOUND_DIR "/home/claude/work/deps/qsound/qsound")
++if(NOT DEFINED QSOUND_ROOT)
++  set(QSOUND_ROOT "/home/claude/work/deps/qsound")
++endif()
++set(QSOUND_DIR "${QSOUND_ROOT}/qsound")
 +set(QSOUND_SRCS "${QSOUND_DIR}/default_tables.cpp" "${QSOUND_DIR}/position_sweep.cpp" "${QSOUND_DIR}/spatial_model.cpp")
 +# DOSBox OPL core, extracted exactly like cmake/dbopl.cmake does
-+set(DBOPL_SRC "/home/claude/work/deps/dosbox")
++if(NOT DEFINED DBOPL_SRC)
++  set(DBOPL_SRC "/home/claude/work/deps/dosbox")
++endif()
 +set(DBOPL_OUT "${CMAKE_CURRENT_BINARY_DIR}/dbopl")
 +file(MAKE_DIRECTORY "${DBOPL_OUT}")
 +foreach(extension cpp h)
@@ -836,7 +841,7 @@ index 0000000..4b97544
 +endforeach()
 +add_executable(tfx_web ${CORE_SRCS} ${PLATFORM_SRCS} ../src/main.cpp web_glfw.cpp web_window.cpp web_audio.cpp ${AUDIO_SRCS} ${QSOUND_SRCS} "${DBOPL_OUT}/dbopl.cpp")
 +set_source_files_properties("${DBOPL_OUT}/dbopl.cpp" PROPERTIES COMPILE_OPTIONS "-fwrapv")
-+target_include_directories(tfx_web PRIVATE ../src .. include shim "${DBOPL_OUT}" "${CMAKE_CURRENT_LIST_DIR}/../src/platform/dbopl" "/home/claude/work/deps/qsound")
++target_include_directories(tfx_web PRIVATE ../src .. include shim "${DBOPL_OUT}" "${CMAKE_CURRENT_LIST_DIR}/../src/platform/dbopl" "${QSOUND_ROOT}")
 +target_compile_definitions(tfx_web PRIVATE VECTORSTORM_NO_BOOST)
 +target_compile_options(tfx_web PRIVATE -fwasm-exceptions "SHELL:-mllvm -wasm-use-legacy-eh=false" -ffp-contract=off "SHELL:-include algorithm" "SHELL:-include ${CMAKE_CURRENT_LIST_DIR}/shim/cxx26_shim.h" -Wno-c++11-narrowing -Wno-deprecated-declarations)
 +target_link_options(tfx_web PRIVATE -fwasm-exceptions -Wl,-z,stack-size=8388608 -Wl,--initial-memory=134217728 -Wl,--max-memory=2147483648 -Wl,--export-memory)

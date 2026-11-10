@@ -1,0 +1,7 @@
+{
+  "name": "tfx-hd",
+  "version": "0.1.0",
+  "description": "TFX HD (browser port in a desktop window)",
+  "main": "main.js",
+  "private": true
+}

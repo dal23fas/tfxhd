@@ -33,3 +33,6 @@
 
 ## Πηγαίος κώδικας
 `source/tfx-web-port.patch` εφαρμόζεται στο Lost-Engines/tfx-cpp commit 9459601. `source/host/` έχει τον host και το `build_html.py`. Άδειες/NOTICE των upstream έργων ισχύουν. Το tfx-cpp δεν έχει άδεια στη ρίζα του (μόνο NOTICE.md), οπότε μην το αναδιανέμεις δημόσια χωρίς να το ελέγξεις.
+
+## Εκτελέσιμο για Windows (δεν έχει χτιστεί ακόμα)
+Το `.github/workflows/build.yml` (Actions → build → Run workflow) χτίζει πρώτα το `tfx.html` και μετά πακετάρει ένα παράθυρο Electron (`TFX-HD-windows.zip`, φάκελος με `TFX-HD.exe`) που τρέχει το ίδιο παιχνίδι με HD, ήχο και μουσική. Η διαδικασία wasm επαληθεύτηκε τοπικά (καθαρό upstream + patch → build). Το Electron βήμα και το workflow ΔΕΝ έχουν τρέξει ποτέ· αν αποτύχει βήμα, δες το log. Τα TFX.DAT/DID.DAT τα φορτώνεις εσύ μέσα στην εφαρμογή.
